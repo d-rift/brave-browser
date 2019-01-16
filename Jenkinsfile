@@ -4,13 +4,14 @@ pipeline {
         // 15m quiet period as described at https://jenkins.io/blog/2010/08/11/quiet-period-feature/
         // quietPeriod(900)
         disableConcurrentBuilds()
-        // timeout(time: 4, unit: 'HOURS')
+        timeout(time: 3, unit: 'HOURS')
         timestamps()
     }
     environment {
         CHANNEL = 'dev'
         REFERRAL_API_KEY = credentials('REFERRAL_API_KEY')
         BRAVE_GOOGLE_API_KEY = credentials('npm_config_brave_google_api_key')
+        LINT_BRANCH = "PRBUILDER_${JOB_NAME}_${BUILD_ID}"
     }
     stages {
         stage("all") {
@@ -19,8 +20,14 @@ pipeline {
                     agent { label "linux-ci" }
                     environment {
                         GIT_CACHE_PATH = "${HOME}/cache"
+                        SCCACHE_BUCKET = 'sccache-brave-browser-lin'
                     }
                     stages {
+                        stage('unlock') {
+                            steps {
+                                sh "rm -rf ${GIT_CACHE_PATH}/*.lock"
+                            }
+                        }
                         stage('install') {
                             steps {
                                 sh 'npm install'
@@ -41,6 +48,28 @@ pipeline {
                                 sh 'npm run sync --all'
                             }
                         }
+                        stage('lint') {
+                            steps {
+                                // lint requires the code to be on a branch
+                                // create a temp branch (and cleanup afterwards)
+                                sh """
+                                    #!/usr/bin/env bash
+
+                                    git config -f .git/config user.name brave-builds
+                                    git config -f .git/config user.email devops@brave.com
+
+                                    pushd .
+                                    cd src/brave/ && git checkout -b ${LINT_BRANCH}
+                                    popd
+
+                                    npm run lint
+
+                                    pushd .
+                                    cd src/brave/ && git checkout - && git branch -D ${LINT_BRANCH}
+                                    popd
+                                """
+                            }
+                        }
                         stage('build') {
                             steps {
                                 sh """
@@ -49,7 +78,7 @@ pipeline {
                                     npm config --userconfig=.npmrc set brave_google_api_key ${BRAVE_GOOGLE_API_KEY}
                                     npm config --userconfig=.npmrc set google_api_endpoint "safebrowsing.brave.com"
                                     npm config --userconfig=.npmrc set google_api_key "dummytoken"
-                                    # npm config --userconfig=.npmrc set sccache "sccache"
+                                    npm config --userconfig=.npmrc set sccache "sccache"
 
                                     npm run build -- Release --channel=${CHANNEL} --debug_build=false --official_build=true
                                 """
@@ -109,8 +138,14 @@ pipeline {
                     agent { label "mac-ci" }
                     environment {
                         GIT_CACHE_PATH = "${HOME}/cache"
+                        SCCACHE_BUCKET = 'sccache-brave-browser-mac'
                     }
                     stages {
+                        stage('unlock') {
+                            steps {
+                                sh "rm -rf ${GIT_CACHE_PATH}/*.lock"
+                            }
+                        }
                         stage('install') {
                             steps {
                                 sh 'npm install'
@@ -131,6 +166,11 @@ pipeline {
                                 sh 'npm run sync --all'
                             }
                         }
+                        // stage('lint') {
+                        //     steps {
+                        //         sh 'npm run lint'
+                        //     }
+                        // }
                         stage('build') {
                             steps {
                                 sh """
@@ -190,6 +230,114 @@ pipeline {
                             post {
                                 always {
                                     archiveArtifacts artifacts: 'src/out/Release/**/*.dmg', fingerprint: true
+                                }
+                            }
+                        }
+                    }
+                }
+                stage("windows-x64") {
+                    agent { label "windows-ci" }
+                    environment {
+                        GIT_CACHE_PATH = "$USERPROFILE\\cache"
+                        SCCACHE_BUCKET = 'sccache-brave-browser-win'
+                        PATH = "$PATH;C:\\Program Files (x86)\\Windows Kits\\10\\bin\\10.0.17134.0\\x64\\;C:\\Program Files (x86)\\Microsoft Visual Studio\\2017\\Community\\Common7\\IDE\\Remote Debugger\\x64"
+                        SIGNTOOL_ARGS = "sign /t  http://timestamp.verisign.com/scripts/timstamp.dll  /fd sha256 /sm"
+                        KEY_CER_PATH = "c:\\jenkins\\digicert-key\\digicert.cer"
+                        KEY_PFX_PATH = "c:\\jenkins\\digicert-key\\digicert.pfx"
+                        AUTHENTICODE_PASSWORD = credentials('c997066c-5ab7-41b3-b436-f396ea3c970b')
+                        CERT = "Brave"
+                    }
+                    stages {
+                        stage('unlock') {
+                            steps {
+                                powershell "rm -rf ${GIT_CACHE_PATH}/*.lock"
+                            }
+                        }
+                        stage('install') {
+                            steps {
+                                powershell 'npm install'
+                            }
+                        }
+                        stage('init') {
+                            when {
+                                not {
+                                    expression { return fileExists('src/brave/package.json') }
+                                }
+                            }
+                            steps {
+                                powershell 'npm run init'
+                            }
+                        }
+                        stage('sync') {
+                            steps {
+                                powershell 'npm run sync --all'
+                            }
+                        }
+                        // stage('lint') {
+                        //     steps {
+                        //         powershell 'npm run lint'
+                        //     }
+                        // }
+                        stage('build') {
+                            steps {
+                                powershell """
+                                    npm config --userconfig=.npmrc set brave_referrals_api_key ${REFERRAL_API_KEY}
+                                    npm config --userconfig=.npmrc set brave_google_api_endpoint https://location.services.mozilla.com/v1/geolocate?key=
+                                    npm config --userconfig=.npmrc set brave_google_api_key ${BRAVE_GOOGLE_API_KEY}
+                                    npm config --userconfig=.npmrc set google_api_endpoint "safebrowsing.brave.com"
+                                    npm config --userconfig=.npmrc set google_api_key "dummytoken"
+                                    # npm config --userconfig=.npmrc set sccache "sccache"
+
+                                    npm run build -- Release --channel=${CHANNEL} --debug_build=false --official_build=true
+                                """
+                            }
+                        }
+                        stage('test-security') {
+                            steps {
+                                script {
+                                    try {
+                                        powershell 'npm run test-security -- --output_path="src/out/Release/brave.exe"'
+                                    }
+                                    catch (ex) {
+                                        currentBuild.result = 'UNSTABLE'
+                                    }
+                                }
+                            }
+                        }
+                        stage('test-unit') {
+                            steps {
+                                script {
+                                    try {
+                                        powershell 'npm run test -- brave_unit_tests Release --output brave_unit_tests.xml'
+                                        xunit([GoogleTest(deleteOutputFiles: true, failIfNotNew: true, pattern: 'src/brave_unit_tests.xml', skipNoTestFiles: false, stopProcessingIfError: true)])
+                                    }
+                                    catch (ex) {
+                                        currentBuild.result = 'UNSTABLE'
+                                    }
+                                }
+                            }
+                        }
+                        stage('test-browser') {
+                            steps {
+                                script {
+                                    try {
+                                        powershell 'npm run test -- brave_browser_tests Release --output brave_browser_tests.xml'
+                                        xunit([GoogleTest(deleteOutputFiles: true, failIfNotNew: true, pattern: 'src/brave_browser_tests.xml', skipNoTestFiles: false, stopProcessingIfError: true)])
+                                    }
+                                    catch (ex) {
+                                        currentBuild.result = 'UNSTABLE'
+                                    }
+                                }
+                            }
+                        }
+                        stage('dist') {
+                            steps {
+                                powershell "Import-PfxCertificate -FilePath "C:\\jenkins\\digicert-key\\digicert.pfx" -CertStoreLocation "Cert:\LocalMachine\My" -Verbose -Password (ConvertTo-SecureString -String "$env:AUTHENTICODE_PASSWORD" -Force -AsPlaintext)"
+                                powershell "npm run create_dist -- Release --channel=${CHANNEL} --debug_build=false --official_build=true"
+                            }
+                            post {
+                                always {
+                                    archiveArtifacts artifacts: 'src/out/Release/**/BraveBrowser*.exe,src/out/Release/**/brave_installer*.exe,src/out/Release/**/brave-*-win32-*.zip', fingerprint: true
                                 }
                             }
                         }
