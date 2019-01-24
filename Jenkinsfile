@@ -332,7 +332,7 @@ pipeline {
                         }
                         stage('dist') {
                             steps {
-                                powershell "Import-PfxCertificate -FilePath 'C:\\jenkins\\digicert-key\\digicert.pfx' -CertStoreLocation 'Cert:\LocalMachine\My' -Verbose -Password (ConvertTo-SecureString -String '${AUTHENTICODE_PASSWORD}' -Force -AsPlaintext)"
+                                powershell "Import-PfxCertificate -FilePath 'C:\\jenkins\\digicert-key\\digicert.pfx' -CertStoreLocation 'Cert:\\LocalMachine\\My' -Verbose -Password (ConvertTo-SecureString -String '${AUTHENTICODE_PASSWORD}' -Force -AsPlaintext)"
                                 powershell "npm run create_dist -- Release --channel=${CHANNEL} --debug_build=false --official_build=true"
                             }
                             post {
