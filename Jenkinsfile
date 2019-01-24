@@ -242,8 +242,8 @@ pipeline {
                         SCCACHE_BUCKET = 'sccache-brave-browser-win'
                         PATH = "$PATH;C:\\Program Files (x86)\\Windows Kits\\10\\bin\\10.0.17134.0\\x64\\;C:\\Program Files (x86)\\Microsoft Visual Studio\\2017\\Community\\Common7\\IDE\\Remote Debugger\\x64"
                         SIGNTOOL_ARGS = "sign /t  http://timestamp.verisign.com/scripts/timstamp.dll  /fd sha256 /sm"
-                        KEY_CER_PATH = "c:\\jenkins\\digicert-key\\digicert.cer"
-                        KEY_PFX_PATH = "c:\\jenkins\\digicert-key\\digicert.pfx"
+                        KEY_CER_PATH = "C:\\jenkins\\digicert-key\\digicert.cer"
+                        KEY_PFX_PATH = "C:\\jenkins\\digicert-key\\digicert.pfx"
                         AUTHENTICODE_PASSWORD = credentials('c997066c-5ab7-41b3-b436-f396ea3c970b')
                         CERT = "Brave"
                     }
@@ -332,7 +332,7 @@ pipeline {
                         }
                         stage('dist') {
                             steps {
-                                powershell "Import-PfxCertificate -FilePath "C:\\jenkins\\digicert-key\\digicert.pfx" -CertStoreLocation "Cert:\LocalMachine\My" -Verbose -Password (ConvertTo-SecureString -String "$env:AUTHENTICODE_PASSWORD" -Force -AsPlaintext)"
+                                powershell "Import-PfxCertificate -FilePath 'C:\\jenkins\\digicert-key\\digicert.pfx' -CertStoreLocation 'Cert:\LocalMachine\My' -Verbose -Password (ConvertTo-SecureString -String '${AUTHENTICODE_PASSWORD}' -Force -AsPlaintext)"
                                 powershell "npm run create_dist -- Release --channel=${CHANNEL} --debug_build=false --official_build=true"
                             }
                             post {
